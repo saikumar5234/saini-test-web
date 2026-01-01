@@ -49,6 +49,7 @@ import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import PendingIcon from '@mui/icons-material/Pending';
 import BlockIcon from '@mui/icons-material/Block';
 import CampaignIcon from '@mui/icons-material/Campaign';
+import LabelIcon from '@mui/icons-material/Label';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import Avatar from '@mui/material/Avatar';
@@ -74,6 +75,11 @@ function Header({ user, onLogout, onHomeClick, onUpdatePriceClick, onAddGreeting
   const [bannerSuccess, setBannerSuccess] = useState('');
   const [bannerTranslating, setBannerTranslating] = useState(false);
   const translationTimeoutRef = React.useRef(null);
+  const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
+  const [categoryName, setCategoryName] = useState('');
+  const [categoryLoading, setCategoryLoading] = useState(false);
+  const [categoryError, setCategoryError] = useState('');
+  const [categorySuccess, setCategorySuccess] = useState('');
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const navigate = useNavigate();
@@ -390,12 +396,68 @@ function Header({ user, onLogout, onHomeClick, onUpdatePriceClick, onAddGreeting
     }
   };
 
+  const handleCategoryDialogOpen = () => {
+    setCategoryDialogOpen(true);
+    setCategoryName('');
+    setCategoryError('');
+    setCategorySuccess('');
+  };
+
+  const handleCategoryDialogClose = () => {
+    setCategoryDialogOpen(false);
+    setCategoryName('');
+    setCategoryError('');
+    setCategorySuccess('');
+  };
+
+  const handleCategorySubmit = async () => {
+    // Validate category name
+    if (!categoryName || !categoryName.trim()) {
+      setCategoryError('Please enter a category name');
+      return;
+    }
+
+    setCategoryLoading(true);
+    setCategoryError('');
+    setCategorySuccess('');
+
+    try {
+      const response = await fetch(API_ENDPOINTS.CATEGORY_CREATE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          name: categoryName.trim()
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok && (data.success || data.id || data.name)) {
+        setCategorySuccess('Category created successfully!');
+        setCategoryName('');
+        // Notify other components to refresh categories
+        window.dispatchEvent(new CustomEvent('categoryCreated'));
+        setTimeout(() => {
+          handleCategoryDialogClose();
+        }, 1500);
+      } else {
+        setCategoryError(data.message || data.error || 'Failed to create category. Please try again.');
+      }
+    } catch (err) {
+      console.error('Error creating category:', err);
+      setCategoryError('Network error. Please try again.');
+    } finally {
+      setCategoryLoading(false);
+    }
+  };
+
   const navButtons = [
     { label: t('home'), icon: <HomeIcon />, path: '/' },
     // { label: t('analytics'), icon: <AnalyticsIcon />, path: '/analytics' },
     { label: t('users'), icon: <PeopleIcon />, path: '/users' },
     { label: t('add_greetings'), icon: <CelebrationIcon />, action: onAddGreetingsClick },
     { label: 'Add Banner', icon: <CampaignIcon />, action: handleBannerDialogOpen },
+    { label: 'Add Category', icon: <LabelIcon />, action: handleCategoryDialogOpen },
     // Show Super Admin Dashboard link only for super admin
     ...(user?.isSuperAdmin || user?.user?.isSuperAdmin ? [
       { label: 'Super Admin', icon: <AdminPanelSettingsIcon />, path: '/super-admin' }
@@ -897,6 +959,68 @@ function Header({ user, onLogout, onHomeClick, onUpdatePriceClick, onAddGreeting
             disabled={bannerLoading || !bannerText.en?.trim() || bannerTranslating}
           >
             {bannerLoading ? 'Updating...' : 'Update Banner'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+      
+      {/* Add Category Dialog */}
+      <Dialog 
+        open={categoryDialogOpen} 
+        onClose={handleCategoryDialogClose}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <LabelIcon color="primary" />
+            <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+              Add Category
+            </Typography>
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          {categoryError && (
+            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setCategoryError('')}>
+              {categoryError}
+            </Alert>
+          )}
+          {categorySuccess && (
+            <Alert severity="success" sx={{ mb: 2 }} onClose={() => setCategorySuccess('')}>
+              {categorySuccess}
+            </Alert>
+          )}
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+            <TextField
+              label="Category Type"
+              value={categoryName}
+              onChange={(e) => setCategoryName(e.target.value)}
+              placeholder="Enter category name (e.g., Nuts, Dried Fruits, etc.)"
+              fullWidth
+              disabled={categoryLoading}
+              required
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !categoryLoading && categoryName.trim()) {
+                  handleCategorySubmit();
+                }
+              }}
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button 
+            onClick={handleCategoryDialogClose}
+            disabled={categoryLoading}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleCategorySubmit}
+            variant="contained"
+            color="primary"
+            disabled={categoryLoading || !categoryName?.trim()}
+          >
+            {categoryLoading ? 'Creating...' : 'Create Category'}
           </Button>
         </DialogActions>
       </Dialog>

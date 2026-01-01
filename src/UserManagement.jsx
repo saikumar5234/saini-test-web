@@ -1,11 +1,12 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Box, Typography, IconButton, Tooltip, TextField, Button, Alert, Snackbar } from '@mui/material';
 import { MaterialReactTable } from 'material-react-table';
-import { CheckCircle, Cancel } from '@mui/icons-material';
+import { CheckCircle, Cancel, Download } from '@mui/icons-material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { API_ENDPOINTS } from './config.js';
+import * as XLSX from 'xlsx';
 
 // helper: format seconds → hh:mm:ss
 const formatTime = (seconds) => {
@@ -425,6 +426,114 @@ const UserManagement = () => {
     }
   };
 
+  // Function to download table data as Excel
+  const handleDownloadExcel = () => {
+    try {
+      // Calculate date range
+      const endDate = new Date(selectedDate);
+      switch (selectedRange) {
+        case '1w': endDate.setDate(endDate.getDate() + 6); break;
+        case '1m': endDate.setMonth(endDate.getMonth() + 1); endDate.setDate(endDate.getDate() - 1); break;
+        case '3m': endDate.setMonth(endDate.getMonth() + 3); endDate.setDate(endDate.getDate() - 1); break;
+        case '6m': endDate.setMonth(endDate.getMonth() + 6); endDate.setDate(endDate.getDate() - 1); break;
+        default: break;
+      }
+      
+      // Generate date string for filename
+      const dateStr = new Date().toISOString().split('T')[0];
+      
+      // Prepare header row
+      const timeSpentHeader = getTimeSpentHeader();
+      const headers = [
+        'S. No.',
+        'User Name',
+        'Mobile',
+        'GST Number',
+        timeSpentHeader,
+        'Total Time Spent',
+        'Status'
+      ];
+      
+      // Prepare data rows
+      const rows = data.map((user, index) => {
+        // Get approval status
+        const userId = user.pendingId || user.userId;
+        let status = 'No Action';
+        if (user.isPending) {
+          status = 'Pending';
+        } else if (approvalStatus[userId] === 'approved') {
+          status = 'Approved';
+        } else if (approvalStatus[userId] === 'rejected') {
+          status = 'Rejected';
+        }
+        
+        // Format time spent with session count
+        const timeSpent = user.todaysTimeSpent;
+        const sessionCount = user.sessionCount;
+        const timeSpentWithSessions = sessionCount > 0 
+          ? `${timeSpent} (${sessionCount} sessions)`
+          : timeSpent;
+        
+        return [
+          index + 1,
+          user.userName || 'N/A',
+          user.userMobile || 'N/A',
+          user.userGstNumber || 'N/A',
+          timeSpentWithSessions,
+          user.totalTimeSpent || '0s',
+          status
+        ];
+      });
+      
+      // Create workbook and worksheet
+      const wb = XLSX.utils.book_new();
+      
+      // Add metadata rows (title and date range)
+      const dateRangeText = `Date Range: ${selectedDate.toLocaleDateString()}${selectedRange !== '1d' ? ` - ${endDate.toLocaleDateString()}` : ''} (${selectedRange.toUpperCase()})`;
+      const metadata = [
+        ['User Management Report'],
+        [dateRangeText],
+        [], // Empty row
+        headers // Header row
+      ];
+      
+      // Combine metadata and data
+      const allData = [...metadata, ...rows];
+      
+      // Create worksheet
+      const ws = XLSX.utils.aoa_to_sheet(allData);
+      
+      // Set column widths for better readability
+      ws['!cols'] = [
+        { wch: 8 },   // S. No.
+        { wch: 20 },  // User Name
+        { wch: 15 },  // Mobile
+        { wch: 18 },  // GST Number
+        { wch: 25 },  // Time Spent
+        { wch: 18 },  // Total Time Spent
+        { wch: 12 }   // Status
+      ];
+      
+      // Merge cells for title and date range
+      ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }, // Title row
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } }  // Date range row
+      ];
+      
+      // Add worksheet to workbook
+      XLSX.utils.book_append_sheet(wb, ws, 'User Management');
+      
+      // Generate Excel file
+      const fileName = `User_Management_Report_${dateStr}_${selectedRange.toUpperCase()}.xlsx`;
+      XLSX.writeFile(wb, fileName);
+      
+      setSuccessMessage('Excel file downloaded successfully!');
+    } catch (error) {
+      console.error('Error generating Excel file:', error);
+      setErrorMessage('Failed to download Excel file. Please try again.');
+    }
+  };
+
   const columns = useMemo(
     () => [
       {
@@ -444,7 +553,7 @@ const UserManagement = () => {
           const timeSpent = row.original.todaysTimeSpent;
           const sessionCount = row.original.sessionCount;
           return (
-            <Box>
+            <Box sx={{ display: 'flex', flexDirection: 'column' }}>
               <Typography variant="body2">{timeSpent}</Typography>
               {sessionCount > 0 && (
                 <Typography variant="caption" color="text.secondary">
@@ -631,28 +740,50 @@ const UserManagement = () => {
         ))}
       </Box>
 
-      {/* Date Range Display */}
-      <Box sx={{ mb: 2, p: 2, backgroundColor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
-        <Typography variant="body2" color="text.secondary">
-          <strong>Showing data for:</strong> {selectedDate.toLocaleDateString()} 
-          {selectedRange !== '1d' && (
-            <span> to {(() => {
-              const endDate = new Date(selectedDate);
-              switch (selectedRange) {
-                case '1w': endDate.setDate(endDate.getDate() + 6); break;
-                case '1m': endDate.setMonth(endDate.getMonth() + 1); endDate.setDate(endDate.getDate() - 1); break;
-                case '3m': endDate.setMonth(endDate.getMonth() + 3); endDate.setDate(endDate.getDate() - 1); break;
-                case '6m': endDate.setMonth(endDate.getMonth() + 6); endDate.setDate(endDate.getDate() - 1); break;
-                default: break;
-              }
-              return endDate.toLocaleDateString();
-            })()}
-          </span>
-          )}
-          <span style={{ marginLeft: 8, color: 'primary.main', fontWeight: 'bold' }}>
-            ({selectedRange.toUpperCase()} range)
-          </span>
-        </Typography>
+      {/* Date Range Display and Download Button */}
+      <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+        <Box sx={{ p: 2, backgroundColor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider', flex: 1 }}>
+          <Typography variant="body2" color="text.secondary">
+            <strong>Showing data for:</strong> {selectedDate.toLocaleDateString()} 
+            {selectedRange !== '1d' && (
+              <span> to {(() => {
+                const endDate = new Date(selectedDate);
+                switch (selectedRange) {
+                  case '1w': endDate.setDate(endDate.getDate() + 6); break;
+                  case '1m': endDate.setMonth(endDate.getMonth() + 1); endDate.setDate(endDate.getDate() - 1); break;
+                  case '3m': endDate.setMonth(endDate.getMonth() + 3); endDate.setDate(endDate.getDate() - 1); break;
+                  case '6m': endDate.setMonth(endDate.getMonth() + 6); endDate.setDate(endDate.getDate() - 1); break;
+                  default: break;
+                }
+                return endDate.toLocaleDateString();
+              })()}
+            </span>
+            )}
+            <span style={{ marginLeft: 8, color: 'primary.main', fontWeight: 'bold' }}>
+              ({selectedRange.toUpperCase()} range)
+            </span>
+          </Typography>
+        </Box>
+        <Button
+          variant="contained"
+          color="primary"
+          startIcon={<Download />}
+          onClick={handleDownloadExcel}
+          disabled={loading || data.length === 0}
+          sx={{
+            fontWeight: 600,
+            borderRadius: 2,
+            px: 3,
+            py: 1.2,
+            textTransform: 'none',
+            boxShadow: 2,
+            '&:hover': {
+              boxShadow: 4,
+            }
+          }}
+        >
+          Download Excel
+        </Button>
       </Box>
       
       <MaterialReactTable

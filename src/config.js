@@ -1,8 +1,8 @@
 // Backend configuration
 // Use environment variable if available, otherwise use production URL
 // export const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_URL ||'https://api.sainidryfruits.com';
-export const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_URL || (import.meta.env.PROD ? '/api' : 'https://api.sainidryfruits.com');
-// export const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://10.227.178.124:8080';
+// export const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_URL || (import.meta.env.PROD ? '/api' : 'https://api.sainidryfruits.com');
+export const BACKEND_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://10.153.94.124:8080';
 // Translation API configuration
 export const TRANSLATION_CONFIG = {
   // Google Translate API (requires API key)
@@ -53,6 +53,12 @@ export const API_ENDPOINTS = {
   ADMIN_VERIFY_OTP: `${BACKEND_BASE_URL}/api/admin/verify-otp`,
   
   // Banner endpoints
-  BANNER_TEXT: `${BACKEND_BASE_URL}/api/banner-text`
+  BANNER_TEXT: `${BACKEND_BASE_URL}/api/banner-text`,
+  
+  // Category endpoints
+  CATEGORIES: `${BACKEND_BASE_URL}/api/categories`,
+  CATEGORY_CREATE: `${BACKEND_BASE_URL}/api/categories`,
+  CATEGORY_UPDATE: (categoryId) => `${BACKEND_BASE_URL}/api/categories/${categoryId}`,
+  CATEGORY_DELETE: (categoryId) => `${BACKEND_BASE_URL}/api/categories/${categoryId}`
 };
 

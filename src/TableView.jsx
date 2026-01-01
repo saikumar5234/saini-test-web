@@ -23,6 +23,10 @@ import EditIcon from '@mui/icons-material/Edit';
 import Snackbar from '@mui/material/Snackbar';
 import MuiAlert from '@mui/material/Alert';
 import Fade from '@mui/material/Fade';
+import FormControl from '@mui/material/FormControl';
+import Select from '@mui/material/Select';
+import MenuItem from '@mui/material/MenuItem';
+import InputLabel from '@mui/material/InputLabel';
 import { useTranslation } from 'react-i18next';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 import { useNavigate } from 'react-router-dom';
@@ -91,6 +95,8 @@ function TableView() {
   const [confirmSaveOpen, setConfirmSaveOpen] = useState(false);
   const [confirmAddProductOpen, setConfirmAddProductOpen] = useState(false);
   const [confirmUpdateProductOpen, setConfirmUpdateProductOpen] = useState(false);
+  const [categories, setCategories] = useState([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(false);
   const { i18n, t } = useTranslation();
   const navigate = useNavigate();
 
@@ -141,7 +147,43 @@ function TableView() {
 
   useEffect(() => {
     fetchProducts();
+    fetchCategories();
   }, []);
+
+  // Listen for category creation events
+  useEffect(() => {
+    const handleCategoryCreated = () => {
+      fetchCategories();
+    };
+    
+    window.addEventListener('categoryCreated', handleCategoryCreated);
+    
+    return () => {
+      window.removeEventListener('categoryCreated', handleCategoryCreated);
+    };
+  }, []);
+
+  // Fetch categories from backend
+  const fetchCategories = async () => {
+    setCategoriesLoading(true);
+    try {
+      const response = await fetch(API_ENDPOINTS.CATEGORIES);
+      if (response.ok) {
+        const data = await response.json();
+        // Handle both array and object responses
+        const categoriesList = Array.isArray(data) ? data : (data.categories || data.data || []);
+        setCategories(categoriesList);
+      } else {
+        console.error('Failed to fetch categories');
+        setCategories([]);
+      }
+    } catch (error) {
+      console.error('Error fetching categories:', error);
+      setCategories([]);
+    } finally {
+      setCategoriesLoading(false);
+    }
+  };
 
   // Fetch price history for all products (mini chart)
   useEffect(() => {
@@ -620,6 +662,11 @@ function TableView() {
   };
 
   const handleAddProduct = async () => {
+    // Validate that category is selected
+    if (!newProduct.category || newProduct.category.trim() === '') {
+      alert('Please select a category before adding the product');
+      return;
+    }
     setConfirmAddProductOpen(true);
   };
 
@@ -1686,14 +1733,24 @@ function TableView() {
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
-            <TextField
-              label="Category"
-              value={newProduct.category}
-              onChange={e => handleAddProductFieldChange('category', e.target.value)}
-              fullWidth
-              size="small"
-              disabled={!!newProductId}
-            />
+            <FormControl fullWidth size="small" disabled={!!newProductId}>
+              <InputLabel>Category</InputLabel>
+              <Select
+                value={newProduct.category}
+                label="Category"
+                onChange={e => handleAddProductFieldChange('category', e.target.value)}
+                disabled={!!newProductId || categoriesLoading}
+              >
+                <MenuItem value="">
+                  <em>Select a category</em>
+                </MenuItem>
+                {categories.map((category) => (
+                  <MenuItem key={category.id || category.name} value={category.name || category}>
+                    {category.name || category}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
             <Box sx={{ display: 'flex', gap: 1 }}>
               <TextField
                 label="Name (EN)"
@@ -2063,14 +2120,24 @@ function TableView() {
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
-            <TextField
-              label="Category"
-              value={editProductForm.category}
-              onChange={e => handleEditProductFieldChange('category', e.target.value)}
-              fullWidth
-              size="small"
-              disabled={updatingProduct}
-            />
+            <FormControl fullWidth size="small" disabled={updatingProduct}>
+              <InputLabel>Category</InputLabel>
+              <Select
+                value={editProductForm.category}
+                label="Category"
+                onChange={e => handleEditProductFieldChange('category', e.target.value)}
+                disabled={updatingProduct || categoriesLoading}
+              >
+                <MenuItem value="">
+                  <em>Select a category</em>
+                </MenuItem>
+                {categories.map((category) => (
+                  <MenuItem key={category.id || category.name} value={category.name || category}>
+                    {category.name || category}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
             <Box sx={{ display: 'flex', gap: 1 }}>
               <TextField
                 label="Name (EN)"
