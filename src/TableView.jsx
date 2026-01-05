@@ -39,6 +39,7 @@ function TableView() {
   const [editedData, setEditedData] = useState([]);
   const [saving, setSaving] = useState(false);
   const priceRefs = useRef([]);
+  const priceFieldTouched = useRef({}); // Track which price fields have been touched/started editing
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [rowToDelete, setRowToDelete] = useState(null);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
@@ -97,11 +98,81 @@ function TableView() {
   const [confirmUpdateProductOpen, setConfirmUpdateProductOpen] = useState(false);
   const [categories, setCategories] = useState([]);
   const [categoriesLoading, setCategoriesLoading] = useState(false);
+  const [globalFilter, setGlobalFilter] = useState('');
+  // Get last selected category from localStorage or use empty string
+  const [lastSelectedCategory, setLastSelectedCategory] = useState(() => {
+    try {
+      return localStorage.getItem('lastSelectedCategory') || '';
+    } catch {
+      return '';
+    }
+  });
   const { i18n, t } = useTranslation();
   const navigate = useNavigate();
 
   // Helper to check if ID is numeric
   const isNumericId = id => !isNaN(Number(id));
+
+  // Custom filter function for global search
+  const customGlobalFilterFn = (row, columnId, filterValue) => {
+    // Handle empty or undefined filter value
+    if (!filterValue || String(filterValue).trim() === '') {
+      return true;
+    }
+    
+    const searchValue = String(filterValue).toLowerCase().trim();
+    const product = row.original;
+    
+    if (!product) {
+      return false;
+    }
+    
+    // Helper function to search in multilingual fields
+    const searchInMultilingual = (field) => {
+      if (!field) return false;
+      if (typeof field === 'object' && field !== null && !Array.isArray(field)) {
+        const values = Object.values(field)
+          .filter(v => v != null && v !== '')
+          .map(v => String(v).toLowerCase());
+        return values.some(v => v.includes(searchValue));
+      } else {
+        return String(field).toLowerCase().includes(searchValue);
+      }
+    };
+    
+    // Search in name (all languages) - this is the main field
+    if (product.name && searchInMultilingual(product.name)) {
+      return true;
+    }
+    
+    // Search in description (all languages)
+    if (product.description && searchInMultilingual(product.description)) {
+      return true;
+    }
+    
+    // Search in category
+    if (product.category && String(product.category).toLowerCase().includes(searchValue)) {
+      return true;
+    }
+    
+    // Search in price
+    if (product.price != null && String(product.price).includes(searchValue)) {
+      return true;
+    }
+    
+    // Search in status
+    const status = product.isDisabled ? 'disabled' : 'active';
+    if (status.includes(searchValue)) {
+      return true;
+    }
+    
+    // Search in ID
+    if (product.id && String(product.id).includes(searchValue)) {
+      return true;
+    }
+    
+    return false;
+  };
 
   // Fetch products from Spring Boot backend
   const fetchProducts = async () => {
@@ -215,8 +286,15 @@ function TableView() {
     }
   }, [editMode, editField]);
 
-  const handlePriceChange = (value, rowIndex) => {
-    setEditedData(prev => prev.map((row, idx) => idx === rowIndex ? { ...row, price: value } : row));
+  const handlePriceChange = (value, rowIndex, isFirstInput = false) => {
+    setEditedData(prev => prev.map((row, idx) => {
+      if (idx === rowIndex) {
+        // If this is the first input (user started typing), clear the field first
+        const newValue = isFirstInput ? value : value;
+        return { ...row, price: newValue };
+      }
+      return row;
+    }));
   };
 
   const handleImageUrlChange = (value, rowIndex, imgIndex) => {
@@ -436,6 +514,16 @@ function TableView() {
   };
 
   const handleAddProductFieldChange = async (field, value, imgIdx = null, lang = null) => {
+    // If category is being changed, save it to localStorage
+    if (field === 'category' && value) {
+      setLastSelectedCategory(value);
+      try {
+        localStorage.setItem('lastSelectedCategory', value);
+      } catch (error) {
+        console.warn('Failed to save last selected category to localStorage:', error);
+      }
+    }
+    
     setNewProduct(prev => {
       if (field === 'imageUrls') {
         const urls = [...prev.imageUrls];
@@ -741,6 +829,16 @@ function TableView() {
           setAddImageUploading(false);
         }
         
+        // Save the category to localStorage after successful product creation
+        if (newProduct.category) {
+          setLastSelectedCategory(newProduct.category);
+          try {
+            localStorage.setItem('lastSelectedCategory', newProduct.category);
+          } catch (error) {
+            console.warn('Failed to save last selected category to localStorage:', error);
+          }
+        }
+        
         // Close dialog and reset form after successful product creation
         setAddDialogOpen(false);
         setNewProductId(null);
@@ -750,8 +848,9 @@ function TableView() {
         setPendingNewProductImages([]);
         setAddImageUploadSuccess(false);
         setAddImageUploadError("");
+        // Reset form but keep the last selected category
         setNewProduct({
-          category: '',
+          category: lastSelectedCategory || '', // Preserve last selected category
           name: { en: '', hi: '', te: '' },
           description: { en: '', hi: '', te: '' },
           price: '',
@@ -1100,6 +1199,14 @@ function TableView() {
     setPendingNewProductImages([]);
     setAddImageUploadSuccess(false);
     setAddImageUploadError("");
+    // Reset form but keep the last selected category
+    setNewProduct({
+      category: lastSelectedCategory || '', // Preserve last selected category
+      name: { en: '', hi: '', te: '' },
+      description: { en: '', hi: '', te: '' },
+      price: '',
+      imageUrls: ['']
+    });
     // Refetch products to ensure UI is in sync
     fetchProducts();
   };
@@ -1227,6 +1334,21 @@ function TableView() {
       {
         accessorKey: 'name',
         header: 'Product Name',
+        filterFn: (row, columnId, filterValue) => {
+          const product = row.original;
+          const searchValue = String(filterValue || '').toLowerCase();
+          if (!searchValue) return true;
+          
+          if (product.name) {
+            if (typeof product.name === 'object') {
+              const nameValues = Object.values(product.name).map(v => String(v || '').toLowerCase());
+              return nameValues.some(v => v.includes(searchValue));
+            } else {
+              return String(product.name).toLowerCase().includes(searchValue);
+            }
+          }
+          return false;
+        },
         Cell: ({ cell, row }) => {
           const value = cell.getValue();
           const displayValue = typeof value === 'object' && value !== null
@@ -1260,6 +1382,21 @@ function TableView() {
       {
         accessorKey: 'description',
         header: 'Description',
+        filterFn: (row, columnId, filterValue) => {
+          const product = row.original;
+          const searchValue = String(filterValue || '').toLowerCase();
+          if (!searchValue) return true;
+          
+          if (product.description) {
+            if (typeof product.description === 'object') {
+              const descValues = Object.values(product.description).map(v => String(v || '').toLowerCase());
+              return descValues.some(v => v.includes(searchValue));
+            } else {
+              return String(product.description).toLowerCase().includes(searchValue);
+            }
+          }
+          return false;
+        },
         Cell: ({ cell }) => {
           const value = cell.getValue();
           if (typeof value === 'object' && value !== null) {
@@ -1315,22 +1452,91 @@ function TableView() {
               type="number"
               size="small"
               value={editedData[row.index]?.price || ''}
-              onChange={e => handlePriceChange(e.target.value, row.index)}
+              onChange={e => {
+                const rowIndex = row.index;
+                const newValue = e.target.value;
+                handlePriceChange(newValue, rowIndex, false);
+              }}
+              onFocus={(e) => {
+                const rowIndex = row.index;
+                const fieldKey = `price_${rowIndex}`;
+                // Select all text when field gets focus (Excel-like behavior)
+                e.target.select();
+                // Reset touched state when field gets focus (unless navigating with arrows)
+                // This allows the field to be cleared when user starts typing
+                if (!priceFieldTouched.current[`navigating_${rowIndex}`]) {
+                  priceFieldTouched.current[fieldKey] = false;
+                }
+                // Clear the navigating flag
+                priceFieldTouched.current[`navigating_${rowIndex}`] = false;
+              }}
               sx={{ width: 100 }}
               inputProps={{ min: 0 }}
               inputRef={el => priceRefs.current[row.index] = el}
               onKeyDown={e => {
+                const rowIndex = row.index;
+                const fieldKey = `price_${rowIndex}`;
+                
                 if (e.key === 'ArrowDown' && priceRefs.current[row.index + 1]) {
                   e.preventDefault();
                   e.stopPropagation();
+                  // Mark that we're navigating with arrow key to next field
+                  priceFieldTouched.current[`navigating_${row.index + 1}`] = true;
                   priceRefs.current[row.index + 1].focus();
+                  setTimeout(() => {
+                    if (priceRefs.current[row.index + 1]) {
+                      priceRefs.current[row.index + 1].select();
+                    }
+                  }, 0);
                 } else if (e.key === 'ArrowUp' && priceRefs.current[row.index - 1]) {
                   e.preventDefault();
                   e.stopPropagation();
+                  // Mark that we're navigating with arrow key to previous field
+                  priceFieldTouched.current[`navigating_${row.index - 1}`] = true;
                   priceRefs.current[row.index - 1].focus();
+                  setTimeout(() => {
+                    if (priceRefs.current[row.index - 1]) {
+                      priceRefs.current[row.index - 1].select();
+                    }
+                  }, 0);
                 } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
                   // Prevent table navigation, allow cursor movement in input
                   e.stopPropagation();
+                } else if (e.key === 'Enter') {
+                  // Move to next field on Enter
+                  e.preventDefault();
+                  if (priceRefs.current[row.index + 1]) {
+                    priceFieldTouched.current[`navigating_${row.index + 1}`] = false;
+                    priceRefs.current[row.index + 1].focus();
+                    setTimeout(() => {
+                      if (priceRefs.current[row.index + 1]) {
+                        priceRefs.current[row.index + 1].select();
+                      }
+                    }, 0);
+                  }
+                } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && /[0-9.]/.test(e.key)) {
+                  // Any number or decimal point - clear field on first keypress (Excel-like behavior)
+                  if (!priceFieldTouched.current[fieldKey]) {
+                    // Mark as touched
+                    priceFieldTouched.current[fieldKey] = true;
+                    // Clear the field on first keypress if it has a value
+                    const currentValue = editedData[rowIndex]?.price || '';
+                    if (currentValue && e.target.selectionStart === 0 && e.target.selectionEnd === currentValue.toString().length) {
+                      // Field is fully selected, clear it
+                      e.preventDefault();
+                      handlePriceChange('', rowIndex, false);
+                      // Insert the new character
+                      setTimeout(() => {
+                        if (priceRefs.current[rowIndex]) {
+                          const input = priceRefs.current[rowIndex];
+                          input.value = e.key;
+                          handlePriceChange(e.key, rowIndex, false);
+                          input.setSelectionRange(1, 1);
+                        }
+                      }, 0);
+                    }
+                    // If field is not fully selected, let normal input behavior happen
+                  }
                 }
               }}
             />
@@ -1476,7 +1682,14 @@ function TableView() {
           variant="text"
           color="inherit"
           startIcon={<AddCircleOutlineIcon />}
-          onClick={() => setAddDialogOpen(true)}
+          onClick={() => {
+            // Set the category to the last selected category when opening dialog
+            setNewProduct(prev => ({
+              ...prev,
+              category: lastSelectedCategory || ''
+            }));
+            setAddDialogOpen(true);
+          }}
           disabled={editMode || saving}
           sx={{
             fontWeight: !editMode && !editField ? 700 : 600,
@@ -1594,11 +1807,20 @@ function TableView() {
         data={editMode ? editedData.filter(p => isNumericId(p.id)) : data.filter(p => isNumericId(p.id))}
         enablePagination={false}
         enableRowSelection={editMode}
+        enableGlobalFilter={true}
+        manualFiltering={false}
+        enableColumnFilters={false}
         getRowId={(row) => row.id.toString()}
         onRowSelectionChange={setRowSelection}
+        filterFns={{
+          customGlobalFilter: customGlobalFilterFn,
+        }}
+        globalFilterFn="customGlobalFilter"
         state={{
           rowSelection,
+          globalFilter,
         }}
+        onGlobalFilterChange={setGlobalFilter}
         initialState={{
           density: 'compact',
         }}

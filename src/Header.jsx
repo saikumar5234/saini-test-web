@@ -50,6 +50,7 @@ import PendingIcon from '@mui/icons-material/Pending';
 import BlockIcon from '@mui/icons-material/Block';
 import CampaignIcon from '@mui/icons-material/Campaign';
 import LabelIcon from '@mui/icons-material/Label';
+import DeleteIcon from '@mui/icons-material/Delete';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import Avatar from '@mui/material/Avatar';
@@ -80,6 +81,9 @@ function Header({ user, onLogout, onHomeClick, onUpdatePriceClick, onAddGreeting
   const [categoryLoading, setCategoryLoading] = useState(false);
   const [categoryError, setCategoryError] = useState('');
   const [categorySuccess, setCategorySuccess] = useState('');
+  const [categories, setCategories] = useState([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(false);
+  const [deletingCategoryId, setDeletingCategoryId] = useState(null);
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const navigate = useNavigate();
@@ -396,11 +400,33 @@ function Header({ user, onLogout, onHomeClick, onUpdatePriceClick, onAddGreeting
     }
   };
 
+  // Fetch categories
+  const fetchCategories = async () => {
+    setCategoriesLoading(true);
+    try {
+      const response = await fetch(API_ENDPOINTS.CATEGORIES);
+      if (response.ok) {
+        const data = await response.json();
+        const categoriesList = Array.isArray(data) ? data : (data.categories || data.data || []);
+        setCategories(categoriesList);
+      } else {
+        console.error('Failed to fetch categories');
+        setCategories([]);
+      }
+    } catch (error) {
+      console.error('Error fetching categories:', error);
+      setCategories([]);
+    } finally {
+      setCategoriesLoading(false);
+    }
+  };
+
   const handleCategoryDialogOpen = () => {
     setCategoryDialogOpen(true);
     setCategoryName('');
     setCategoryError('');
     setCategorySuccess('');
+    fetchCategories(); // Fetch categories when dialog opens
   };
 
   const handleCategoryDialogClose = () => {
@@ -435,6 +461,8 @@ function Header({ user, onLogout, onHomeClick, onUpdatePriceClick, onAddGreeting
       if (response.ok && (data.success || data.id || data.name)) {
         setCategorySuccess('Category created successfully!');
         setCategoryName('');
+        // Refresh categories list
+        await fetchCategories();
         // Notify other components to refresh categories
         window.dispatchEvent(new CustomEvent('categoryCreated'));
         setTimeout(() => {
@@ -448,6 +476,46 @@ function Header({ user, onLogout, onHomeClick, onUpdatePriceClick, onAddGreeting
       setCategoryError('Network error. Please try again.');
     } finally {
       setCategoryLoading(false);
+    }
+  };
+
+  const handleDeleteCategory = async (categoryId) => {
+    if (!categoryId) {
+      setCategoryError('Invalid category ID');
+      return;
+    }
+
+    // Confirm deletion
+    if (!window.confirm('Are you sure you want to delete this category?')) {
+      return;
+    }
+
+    setDeletingCategoryId(categoryId);
+    setCategoryError('');
+    setCategorySuccess('');
+
+    try {
+      const response = await fetch(API_ENDPOINTS.CATEGORY_DELETE(categoryId), {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const data = await response.json();
+
+      if (response.ok && (data.success || data.message)) {
+        setCategorySuccess('Category deleted successfully!');
+        // Refresh categories list
+        await fetchCategories();
+        // Notify other components to refresh categories
+        window.dispatchEvent(new CustomEvent('categoryCreated'));
+      } else {
+        setCategoryError(data.message || data.error || 'Failed to delete category. Please try again.');
+      }
+    } catch (err) {
+      console.error('Error deleting category:', err);
+      setCategoryError('Network error. Please try again.');
+    } finally {
+      setDeletingCategoryId(null);
     }
   };
 
@@ -1005,6 +1073,69 @@ function Header({ user, onLogout, onHomeClick, onUpdatePriceClick, onAddGreeting
                 }
               }}
             />
+            
+            {/* Display existing categories */}
+            {categories.length > 0 && (
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600, color: 'text.secondary' }}>
+                  Existing Categories:
+                </Typography>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, maxHeight: 200, overflowY: 'auto' }}>
+                  {categories.map((category) => (
+                    <Box
+                      key={category.id || category.name}
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        p: 1.5,
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        borderRadius: 1,
+                        backgroundColor: 'background.paper',
+                        '&:hover': {
+                          backgroundColor: 'action.hover'
+                        }
+                      }}
+                    >
+                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                        {category.name || category}
+                      </Typography>
+                      <IconButton
+                        size="small"
+                        color="error"
+                        onClick={() => handleDeleteCategory(category.id)}
+                        disabled={deletingCategoryId === category.id || categoryLoading}
+                        sx={{
+                          '&:hover': {
+                            backgroundColor: 'error.light',
+                            color: 'error.contrastText'
+                          }
+                        }}
+                      >
+                        {deletingCategoryId === category.id ? (
+                          <CircularProgress size={20} />
+                        ) : (
+                          <DeleteIcon fontSize="small" />
+                        )}
+                      </IconButton>
+                    </Box>
+                  ))}
+                </Box>
+              </Box>
+            )}
+            
+            {categoriesLoading && (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                <CircularProgress size={24} />
+              </Box>
+            )}
+            
+            {!categoriesLoading && categories.length === 0 && (
+              <Typography variant="body2" sx={{ color: 'text.secondary', fontStyle: 'italic', textAlign: 'center', py: 2 }}>
+                No categories created yet
+              </Typography>
+            )}
           </Box>
         </DialogContent>
         <DialogActions>
