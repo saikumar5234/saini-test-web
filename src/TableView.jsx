@@ -1,4 +1,5 @@
-import React, { useMemo, useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import { MaterialReactTable } from 'material-react-table';
 import { API_ENDPOINTS, TRANSLATION_CONFIG } from './config.js';
 import Box from '@mui/material/Box';
@@ -14,6 +15,7 @@ import SaveIcon from '@mui/icons-material/Save';
 import DeleteIcon from '@mui/icons-material/Delete';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import TranslateIcon from '@mui/icons-material/Translate';
 import Tooltip from '@mui/material/Tooltip';
 import Divider from '@mui/material/Divider';
 import Grid from '@mui/material/Grid';
@@ -53,6 +55,7 @@ function TableView() {
   const [adding, setAdding] = useState(false);
   const [imageDialogOpen, setImageDialogOpen] = useState(false);
   const [imageDialogRowIndex, setImageDialogRowIndex] = useState(null);
+  const [imageDialogProductId, setImageDialogProductId] = useState(null); // product id for correct image association
   const [imageDialogEditMode, setImageDialogEditMode] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(false);
@@ -114,6 +117,31 @@ function TableView() {
   const isNumericId = id => !isNaN(Number(id));
 
   // Custom filter function for global search
+  // Smart search function: checks if all characters in search query appear in order in the text
+  // Example: "ond" matches "almond oil" because o, n, d appear in order
+  const smartSearchMatch = (text, searchQuery) => {
+    if (!text || !searchQuery) return false;
+    const textLower = String(text).toLowerCase();
+    const queryLower = String(searchQuery).toLowerCase();
+    
+    // First try exact substring match (faster)
+    if (textLower.includes(queryLower)) {
+      return true;
+    }
+    
+    // Then try smart match: all characters in order (not necessarily contiguous)
+    let textIndex = 0;
+    for (let i = 0; i < queryLower.length; i++) {
+      const char = queryLower[i];
+      const foundIndex = textLower.indexOf(char, textIndex);
+      if (foundIndex === -1) {
+        return false; // Character not found
+      }
+      textIndex = foundIndex + 1; // Continue searching from next position
+    }
+    return true; // All characters found in order
+  };
+
   const customGlobalFilterFn = (row, columnId, filterValue) => {
     // Handle empty or undefined filter value
     if (!filterValue || String(filterValue).trim() === '') {
@@ -127,16 +155,16 @@ function TableView() {
       return false;
     }
     
-    // Helper function to search in multilingual fields
+    // Helper function to search in multilingual fields with smart search
     const searchInMultilingual = (field) => {
       if (!field) return false;
       if (typeof field === 'object' && field !== null && !Array.isArray(field)) {
         const values = Object.values(field)
           .filter(v => v != null && v !== '')
           .map(v => String(v).toLowerCase());
-        return values.some(v => v.includes(searchValue));
+        return values.some(v => smartSearchMatch(v, searchValue));
       } else {
-        return String(field).toLowerCase().includes(searchValue);
+        return smartSearchMatch(String(field), searchValue);
       }
     };
     
@@ -151,22 +179,22 @@ function TableView() {
     }
     
     // Search in category
-    if (product.category && String(product.category).toLowerCase().includes(searchValue)) {
+    if (product.category && smartSearchMatch(String(product.category), searchValue)) {
       return true;
     }
     
-    // Search in price
+    // Search in price (keep exact match for numbers)
     if (product.price != null && String(product.price).includes(searchValue)) {
       return true;
     }
     
     // Search in status
     const status = product.isDisabled ? 'disabled' : 'active';
-    if (status.includes(searchValue)) {
+    if (smartSearchMatch(status, searchValue)) {
       return true;
     }
     
-    // Search in ID
+    // Search in ID (keep exact match for numbers)
     if (product.id && String(product.id).includes(searchValue)) {
       return true;
     }
@@ -206,6 +234,11 @@ function TableView() {
             imageUrls: p.imageIds || [],
             isDisabled,
           };
+        })
+        .sort((a, b) => {
+          // Sort: active products first, disabled products at the end
+          if (a.isDisabled === b.isDisabled) return 0;
+          return a.isDisabled ? 1 : -1;
         });
       setData(adapted);
       setEditedData(adapted);
@@ -287,47 +320,55 @@ function TableView() {
   }, [editMode, editField]);
 
   const handlePriceChange = (value, rowIndex, isFirstInput = false) => {
-    setEditedData(prev => prev.map((row, idx) => {
-      if (idx === rowIndex) {
-        // If this is the first input (user started typing), clear the field first
-        const newValue = isFirstInput ? value : value;
-        return { ...row, price: newValue };
-      }
-      return row;
-    }));
+    flushSync(() => {
+      setEditedData(prev => prev.map((row, idx) => {
+        if (idx === rowIndex) {
+          // If this is the first input (user started typing), clear the field first
+          const newValue = isFirstInput ? value : value;
+          return { ...row, price: newValue };
+        }
+        return row;
+      }));
+    });
   };
 
   const handleImageUrlChange = (value, rowIndex, imgIndex) => {
-    setEditedData(prev => prev.map((row, idx) => {
-      if (idx === rowIndex) {
-        const urls = Array.isArray(row.imageUrls) ? [...row.imageUrls] : [];
-        urls[imgIndex] = value;
-        return { ...row, imageUrls: urls };
-      }
-      return row;
-    }));
+    flushSync(() => {
+      setEditedData(prev => prev.map((row, idx) => {
+        if (idx === rowIndex) {
+          const urls = Array.isArray(row.imageUrls) ? [...row.imageUrls] : [];
+          urls[imgIndex] = value;
+          return { ...row, imageUrls: urls };
+        }
+        return row;
+      }));
+    });
   };
 
   const handleAddImageUrl = (rowIndex) => {
-    setEditedData(prev => prev.map((row, idx) => {
-      if (idx === rowIndex) {
-        const urls = Array.isArray(row.imageUrls) ? [...row.imageUrls] : [];
-        urls.push('');
-        return { ...row, imageUrls: urls };
-      }
-      return row;
-    }));
+    flushSync(() => {
+      setEditedData(prev => prev.map((row, idx) => {
+        if (idx === rowIndex) {
+          const urls = Array.isArray(row.imageUrls) ? [...row.imageUrls] : [];
+          urls.push('');
+          return { ...row, imageUrls: urls };
+        }
+        return row;
+      }));
+    });
   };
 
   const handleDeleteImageUrl = (rowIndex, imgIndex) => {
-    setEditedData(prev => prev.map((row, idx) => {
-      if (idx === rowIndex) {
-        const urls = Array.isArray(row.imageUrls) ? [...row.imageUrls] : [];
-        urls.splice(imgIndex, 1);
-        return { ...row, imageUrls: urls };
-      }
-      return row;
-    }));
+    flushSync(() => {
+      setEditedData(prev => prev.map((row, idx) => {
+        if (idx === rowIndex) {
+          const urls = Array.isArray(row.imageUrls) ? [...row.imageUrls] : [];
+          urls.splice(imgIndex, 1);
+          return { ...row, imageUrls: urls };
+        }
+        return row;
+      }));
+    });
   };
 
   const handleSave = async () => {
@@ -513,95 +554,140 @@ function TableView() {
     }
   };
 
-  const handleAddProductFieldChange = async (field, value, imgIdx = null, lang = null) => {
-    // If category is being changed, save it to localStorage
+  // Optimized handlers for immediate text input updates
+  const handleNameEnChange = useCallback((e) => {
+    const value = e.target.value;
+    flushSync(() => {
+      setNewProduct(prev => ({
+        ...prev,
+        name: {
+          ...prev.name,
+          en: value
+        }
+      }));
+    });
+  }, []);
+
+  const handleNameHiChange = useCallback((e) => {
+    const value = e.target.value;
+    flushSync(() => {
+      setNewProduct(prev => ({
+        ...prev,
+        name: {
+          ...prev.name,
+          hi: value
+        }
+      }));
+    });
+  }, []);
+
+  const handleNameTeChange = useCallback((e) => {
+    const value = e.target.value;
+    flushSync(() => {
+      setNewProduct(prev => ({
+        ...prev,
+        name: {
+          ...prev.name,
+          te: value
+        }
+      }));
+    });
+  }, []);
+
+  const handleDescriptionEnChange = useCallback((e) => {
+    const value = e.target.value;
+    flushSync(() => {
+      setNewProduct(prev => ({
+        ...prev,
+        description: {
+          ...prev.description,
+          en: value
+        }
+      }));
+    });
+  }, []);
+
+  const handleDescriptionHiChange = useCallback((e) => {
+    const value = e.target.value;
+    flushSync(() => {
+      setNewProduct(prev => ({
+        ...prev,
+        description: {
+          ...prev.description,
+          hi: value
+        }
+      }));
+    });
+  }, []);
+
+  const handleDescriptionTeChange = useCallback((e) => {
+    const value = e.target.value;
+    flushSync(() => {
+      setNewProduct(prev => ({
+        ...prev,
+        description: {
+          ...prev.description,
+          te: value
+        }
+      }));
+    });
+  }, []);
+
+  const handleAddProductFieldChange = (field, value, imgIdx = null, lang = null) => {
+    // If category is being changed, save it to localStorage (async, non-blocking)
     if (field === 'category' && value) {
       setLastSelectedCategory(value);
-      try {
-        localStorage.setItem('lastSelectedCategory', value);
-      } catch (error) {
-        console.warn('Failed to save last selected category to localStorage:', error);
-      }
+      // Use setTimeout to make localStorage non-blocking
+      setTimeout(() => {
+        try {
+          localStorage.setItem('lastSelectedCategory', value);
+        } catch (error) {
+          console.warn('Failed to save last selected category to localStorage:', error);
+        }
+      }, 0);
     }
     
-    setNewProduct(prev => {
-      if (field === 'imageUrls') {
-        const urls = [...prev.imageUrls];
-        urls[imgIdx] = value;
-        return { ...prev, imageUrls: urls };
-      }
-      if (field === 'name' || field === 'description') {
-        const updatedField = { ...prev[field], [lang]: value };
-        
-        // Auto-translate when English name is changed
-        if (field === 'name' && lang === 'en' && value.trim()) {
-          setTranslating(true);
-          
-          // Translate to Hindi and Telugu
-          Promise.all([
-            translateText(value, 'hi'),
-            translateText(value, 'te')
-          ]).then(([hindiText, teluguText]) => {
-            setNewProduct(current => ({
-              ...current,
-              name: { 
-                ...current.name, 
-                hi: hindiText || current.name.hi,
-                te: teluguText || current.name.te
-              }
-            }));
-            setTranslating(false);
-            if (hindiText || teluguText) {
-              setTranslationSuccess(true);
-              setTimeout(() => setTranslationSuccess(false), 3000);
-            }
-          }).catch(() => {
-            setTranslating(false);
-          });
-        }
-        
-        // Auto-translate when English description is changed
-        if (field === 'description' && lang === 'en' && value.trim()) {
-          setTranslating(true);
-          
-          // Translate to Hindi and Telugu
-          Promise.all([
-            translateText(value, 'hi'),
-            translateText(value, 'te')
-          ]).then(([hindiText, teluguText]) => {
-            setNewProduct(current => ({
-              ...current,
-              description: { 
-                ...current.description, 
-                hi: hindiText || current.description.hi,
-                te: teluguText || current.description.te
-              }
-            }));
-            setTranslating(false);
-            if (hindiText || teluguText) {
-              setTranslationSuccess(true);
-              setTimeout(() => setTranslationSuccess(false), 3000);
-            }
-          }).catch(() => {
-            setTranslating(false);
-          });
-        }
-        
-        return { ...prev, [field]: updatedField };
-      }
-      return { ...prev, [field]: value };
-    });
+    // Immediate state update for immediate UI feedback
+    if (field === 'imageUrls') {
+      flushSync(() => {
+        setNewProduct(prev => {
+          const urls = [...prev.imageUrls];
+          urls[imgIdx] = value;
+          return { ...prev, imageUrls: urls };
+        });
+      });
+    } else if (field === 'name' || field === 'description') {
+      // Direct update for name/description fields for immediate feedback
+      flushSync(() => {
+        setNewProduct(prev => ({
+          ...prev,
+          [field]: {
+            ...prev[field],
+            [lang]: value
+          }
+        }));
+      });
+    } else {
+      // Use flushSync for all other fields (category, price, etc.) for immediate feedback
+      flushSync(() => {
+        setNewProduct(prev => ({ ...prev, [field]: value }));
+      });
+    }
   };
 
   const handleAddProductAddImage = () => {
-    setNewProduct(prev => ({ ...prev, imageUrls: [...prev.imageUrls, ''] }));
+    flushSync(() => {
+      setNewProduct(prev => ({ ...prev, imageUrls: [...prev.imageUrls, ''] }));
+    });
   };
 
   const handleAddProductDeleteImage = (imgIdx) => {
-    setNewProduct(prev => {
-      const urls = [...prev.imageUrls];
-      urls.splice(imgIdx, 1);
-      return { ...prev, imageUrls: urls };
+    flushSync(() => {
+      setNewProduct(prev => {
+        const urls = [...prev.imageUrls];
+        urls.splice(imgIdx, 1);
+        return { ...prev, imageUrls: urls };
+      });
     });
   };
 
@@ -635,70 +721,123 @@ function TableView() {
     setEditProductDialogOpen(true);
   };
 
-  // Handle edit product field changes with auto-translation
-  const handleEditProductFieldChange = async (field, value, lang = null) => {
-    setEditProductForm(prev => {
-      if (field === 'name' || field === 'description') {
-        const updatedField = { ...prev[field], [lang]: value };
-        
-        // Auto-translate when English name is changed
-        if (field === 'name' && lang === 'en' && value.trim()) {
-          setTranslating(true);
-          
-          // Translate to Hindi and Telugu
-          Promise.all([
-            translateText(value, 'hi'),
-            translateText(value, 'te')
-          ]).then(([hindiText, teluguText]) => {
-            setEditProductForm(current => ({
-              ...current,
-              name: { 
-                ...current.name, 
-                hi: hindiText || current.name.hi,
-                te: teluguText || current.name.te
-              }
-            }));
-            setTranslating(false);
-            if (hindiText || teluguText) {
-              setTranslationSuccess(true);
-              setTimeout(() => setTranslationSuccess(false), 3000);
-            }
-          }).catch(() => {
-            setTranslating(false);
-          });
-        }
-        
-        // Auto-translate when English description is changed
-        if (field === 'description' && lang === 'en' && value.trim()) {
-          setTranslating(true);
-          
-          // Translate to Hindi and Telugu
-          Promise.all([
-            translateText(value, 'hi'),
-            translateText(value, 'te')
-          ]).then(([hindiText, teluguText]) => {
-            setEditProductForm(current => ({
-              ...current,
-              description: { 
-                ...current.description, 
-                hi: hindiText || current.description.hi,
-                te: teluguText || current.description.te
-              }
-            }));
-            setTranslating(false);
-            if (hindiText || teluguText) {
-              setTranslationSuccess(true);
-              setTimeout(() => setTranslationSuccess(false), 3000);
-            }
-          }).catch(() => {
-            setTranslating(false);
-          });
-        }
-        
-        return { ...prev, [field]: updatedField };
+  // Handle edit product field changes
+  const handleEditProductFieldChange = (field, value, lang = null) => {
+    // Immediate state update for immediate UI feedback
+    if (field === 'name' || field === 'description') {
+      flushSync(() => {
+        setEditProductForm(prev => ({
+          ...prev,
+          [field]: {
+            ...prev[field],
+            [lang]: value
+          }
+        }));
+      });
+    } else {
+      // Use flushSync for category, price and other fields for immediate feedback
+      flushSync(() => {
+        setEditProductForm(prev => ({ ...prev, [field]: value }));
+      });
+    }
+  };
+
+  // Manual translate function for add product dialog
+  const handleManualTranslate = async () => {
+    const enName = newProduct.name.en?.trim();
+    const enDescription = newProduct.description.en?.trim();
+    
+    if (!enName && !enDescription) {
+      return;
+    }
+    
+    setTranslating(true);
+    
+    try {
+      const promises = [];
+      
+      if (enName) {
+        promises.push(
+          translateText(enName, 'hi').then(hi => ({ type: 'name', lang: 'hi', text: hi })),
+          translateText(enName, 'te').then(te => ({ type: 'name', lang: 'te', text: te }))
+        );
       }
-      return { ...prev, [field]: value };
-    });
+      
+      if (enDescription) {
+        promises.push(
+          translateText(enDescription, 'hi').then(hi => ({ type: 'description', lang: 'hi', text: hi })),
+          translateText(enDescription, 'te').then(te => ({ type: 'description', lang: 'te', text: te }))
+        );
+      }
+      
+      const results = await Promise.all(promises);
+      
+      setNewProduct(prev => {
+        const updated = { ...prev };
+        results.forEach(({ type, lang, text }) => {
+          if (text) {
+            updated[type] = { ...updated[type], [lang]: text };
+          }
+        });
+        return updated;
+      });
+      
+      setTranslationSuccess(true);
+      setTimeout(() => setTranslationSuccess(false), 3000);
+    } catch (error) {
+      console.error('Translation error:', error);
+    } finally {
+      setTranslating(false);
+    }
+  };
+
+  // Manual translate function for edit product dialog
+  const handleEditManualTranslate = async () => {
+    const enName = editProductForm.name.en?.trim();
+    const enDescription = editProductForm.description.en?.trim();
+    
+    if (!enName && !enDescription) {
+      return;
+    }
+    
+    setTranslating(true);
+    
+    try {
+      const promises = [];
+      
+      if (enName) {
+        promises.push(
+          translateText(enName, 'hi').then(hi => ({ type: 'name', lang: 'hi', text: hi })),
+          translateText(enName, 'te').then(te => ({ type: 'name', lang: 'te', text: te }))
+        );
+      }
+      
+      if (enDescription) {
+        promises.push(
+          translateText(enDescription, 'hi').then(hi => ({ type: 'description', lang: 'hi', text: hi })),
+          translateText(enDescription, 'te').then(te => ({ type: 'description', lang: 'te', text: te }))
+        );
+      }
+      
+      const results = await Promise.all(promises);
+      
+      setEditProductForm(prev => {
+        const updated = { ...prev };
+        results.forEach(({ type, lang, text }) => {
+          if (text) {
+            updated[type] = { ...updated[type], [lang]: text };
+          }
+        });
+        return updated;
+      });
+      
+      setTranslationSuccess(true);
+      setTimeout(() => setTranslationSuccess(false), 3000);
+    } catch (error) {
+      console.error('Translation error:', error);
+    } finally {
+      setTranslating(false);
+    }
   };
 
   // Handle update product
@@ -879,8 +1018,9 @@ function TableView() {
     setRowSelection({}); // Clear selection when exiting edit mode
   };
 
-  const handleOpenImageDialog = async (rowIndex, edit = false) => {
-    setImageDialogRowIndex(rowIndex);
+  const handleOpenImageDialog = async (productId, edit = false) => {
+    setImageDialogProductId(productId);
+    setImageDialogRowIndex(null); // no longer used for lookups; keep for any legacy refs
     setImageDialogEditMode(edit);
     setImageDialogOpen(true);
     // Reset upload states when opening in edit mode
@@ -890,12 +1030,11 @@ function TableView() {
       setUploadSuccess(false);
       setImageEditSaveSuccess(false);
     }
-    // Only fetch images for view mode
+    // Only fetch images for view mode - use productId so we always show the correct product's images
     if (!edit) {
       setViewImagesLoading(true);
       setViewImageIds([]);
-      const productId = data[rowIndex]?.id;
-      if (productId && !isNaN(Number(productId))) {
+      if (productId != null && !isNaN(Number(productId))) {
         try {
           const res = await fetch(API_ENDPOINTS.PRODUCT_IMAGES(productId));
           if (res.ok) {
@@ -913,42 +1052,49 @@ function TableView() {
   const handleCloseImageDialog = () => {
     setImageDialogOpen(false);
     setImageDialogRowIndex(null);
+    setImageDialogProductId(null);
     setImageDialogEditMode(false);
     setPendingImageFiles([]);
     setUploadError("");
     setUploadSuccess(false);
-    setImageEditSaveSuccess(false);
     fetchProducts(); // Ensure UI is in sync after all edits
   };
 
+  // Resolve current product for image dialog by ID (avoids wrong product when table is filtered/sorted)
+  const imageDialogProduct = useMemo(() => {
+    if (imageDialogProductId == null) return null;
+    const found = editedData.find(p => String(p.id) === String(imageDialogProductId));
+    return found ?? null;
+  }, [imageDialogProductId, editedData]);
+
   const handleImageDialogUrlChange = (value, imgIdx) => {
-    if (imageDialogRowIndex === null) return;
-    setEditedData(prev => prev.map((row, idx) => {
-      if (idx === imageDialogRowIndex) {
+    if (imageDialogProductId == null) return;
+    flushSync(() => {
+      setEditedData(prev => prev.map((row) => {
+        if (String(row.id) !== String(imageDialogProductId)) return row;
         const urls = Array.isArray(row.imageUrls) ? [...row.imageUrls] : [];
         urls[imgIdx] = value;
         return { ...row, imageUrls: urls };
-      }
-      return row;
-    }));
+      }));
+    });
   };
 
   const handleImageDialogAddImage = () => {
-    if (imageDialogRowIndex === null) return;
-    setEditedData(prev => prev.map((row, idx) => {
-      if (idx === imageDialogRowIndex) {
+    if (imageDialogProductId == null) return;
+    flushSync(() => {
+      setEditedData(prev => prev.map((row) => {
+        if (String(row.id) !== String(imageDialogProductId)) return row;
         const urls = Array.isArray(row.imageUrls) ? [...row.imageUrls] : [];
         urls.push('');
         return { ...row, imageUrls: urls };
-      }
-      return row;
-    }));
+      }));
+    });
   };
 
   // Mark image for deletion (no delete yet)
   const handleImageDialogDeleteImage = async (imgIdx) => {
-    if (imageDialogRowIndex === null) return;
-    const product = editedData[imageDialogRowIndex];
+    if (imageDialogProductId == null) return;
+    const product = imageDialogProduct;
     const productId = product?.id;
     const imageId = product?.imageUrls?.[imgIdx];
     
@@ -970,11 +1116,9 @@ function TableView() {
       console.error('Invalid image ID (not a number):', imageId);
       // If it's not a number, it might be a URL or empty string - just remove from local state
       const updatedImageUrls = (product.imageUrls || []).filter((id, idx) => idx !== imgIdx);
-      setEditedData(prev => prev.map((row, idx) => {
-        if (idx === imageDialogRowIndex) {
-          return { ...row, imageUrls: updatedImageUrls };
-        }
-        return row;
+      setEditedData(prev => prev.map((row) => {
+        if (String(row.id) !== String(imageDialogProductId)) return row;
+        return { ...row, imageUrls: updatedImageUrls };
       }));
       return;
     }
@@ -998,11 +1142,9 @@ function TableView() {
         
         // Update local state to reflect the deletion immediately
         const updatedImageUrls = (product.imageUrls || []).filter((id, idx) => idx !== imgIdx);
-        setEditedData(prev => prev.map((row, idx) => {
-          if (idx === imageDialogRowIndex) {
-            return { ...row, imageUrls: updatedImageUrls };
-          }
-          return row;
+        setEditedData(prev => prev.map((row) => {
+          if (String(row.id) !== String(imageDialogProductId)) return row;
+          return { ...row, imageUrls: updatedImageUrls };
         }));
         
         // Clear success message after a delay
@@ -1023,8 +1165,8 @@ function TableView() {
   };
 
   const handleSaveImages = async () => {
-    if (imageDialogRowIndex === null) return;
-    const product = editedData[imageDialogRowIndex];
+    if (imageDialogProductId == null) return;
+    const product = imageDialogProduct;
     const productId = product?.id;
     if (!productId || isNaN(Number(productId))) return;
     // Start with current image IDs, remove those marked for deletion
@@ -1072,9 +1214,9 @@ function TableView() {
     }
   };
 
-  const handleImageFileUpload = async (file, rowIndex) => {
-    if (!file || imageDialogRowIndex === null) return;
-    const productId = editMode ? editedData[rowIndex]?.id : data[rowIndex]?.id;
+  const handleImageFileUpload = async (file) => {
+    if (!file || imageDialogProductId == null) return;
+    const productId = imageDialogProductId;
     // Only allow upload if productId is a number
     if (!productId || isNaN(Number(productId))) {
       setUploadError("Cannot upload image: Product ID is not a valid number. Please use products created via backend only.");
@@ -1090,13 +1232,11 @@ function TableView() {
       });
       if (response.ok) {
         const { imageId } = await response.json();
-        setEditedData(prev => prev.map((row, idx) => {
-          if (idx === rowIndex) {
-            const imageIds = Array.isArray(row.imageUrls) ? [...row.imageUrls] : [];
-            imageIds.push(imageId);
-            return { ...row, imageUrls: imageIds };
-          }
-          return row;
+        setEditedData(prev => prev.map((row) => {
+          if (String(row.id) !== String(imageDialogProductId)) return row;
+          const imageIds = Array.isArray(row.imageUrls) ? [...row.imageUrls] : [];
+          imageIds.push(imageId);
+          return { ...row, imageUrls: imageIds };
         }));
         setUploadSuccess(true);
         setSelectedImageFile(null);
@@ -1212,8 +1352,8 @@ function TableView() {
   };
 
   const handleUploadPendingImage = async () => {
-    if (imageDialogRowIndex === null || pendingImageFiles.length === 0) return;
-    const product = editedData[imageDialogRowIndex];
+    if (imageDialogProductId == null || pendingImageFiles.length === 0) return;
+    const product = imageDialogProduct;
     const productId = product?.id;
     if (!productId || isNaN(Number(productId))) return;
     
@@ -1241,11 +1381,9 @@ function TableView() {
     // Update local state with new image IDs immediately for better UX
     const updatedImageIds = [...(product.imageUrls || []).filter(id => !!id && !isNaN(Number(id))), ...newImageIds];
     
-    setEditedData(prev => prev.map((row, idx) => {
-      if (idx === imageDialogRowIndex) {
-        return { ...row, imageUrls: updatedImageIds };
-      }
-      return row;
+    setEditedData(prev => prev.map((row) => {
+      if (String(row.id) !== String(imageDialogProductId)) return row;
+      return { ...row, imageUrls: updatedImageIds };
     }));
     
     // Backend should automatically update the product's image list when images are uploaded
@@ -1336,15 +1474,17 @@ function TableView() {
         header: 'Product Name',
         filterFn: (row, columnId, filterValue) => {
           const product = row.original;
-          const searchValue = String(filterValue || '').toLowerCase();
+          const searchValue = String(filterValue || '').toLowerCase().trim();
           if (!searchValue) return true;
           
           if (product.name) {
             if (typeof product.name === 'object') {
-              const nameValues = Object.values(product.name).map(v => String(v || '').toLowerCase());
-              return nameValues.some(v => v.includes(searchValue));
+              const nameValues = Object.values(product.name)
+                .filter(v => v != null && v !== '')
+                .map(v => String(v).toLowerCase());
+              return nameValues.some(v => smartSearchMatch(v, searchValue));
             } else {
-              return String(product.name).toLowerCase().includes(searchValue);
+              return smartSearchMatch(String(product.name), searchValue);
             }
           }
           return false;
@@ -1384,15 +1524,17 @@ function TableView() {
         header: 'Description',
         filterFn: (row, columnId, filterValue) => {
           const product = row.original;
-          const searchValue = String(filterValue || '').toLowerCase();
+          const searchValue = String(filterValue || '').toLowerCase().trim();
           if (!searchValue) return true;
           
           if (product.description) {
             if (typeof product.description === 'object') {
-              const descValues = Object.values(product.description).map(v => String(v || '').toLowerCase());
-              return descValues.some(v => v.includes(searchValue));
+              const descValues = Object.values(product.description)
+                .filter(v => v != null && v !== '')
+                .map(v => String(v).toLowerCase());
+              return descValues.some(v => smartSearchMatch(v, searchValue));
             } else {
-              return String(product.description).toLowerCase().includes(searchValue);
+              return smartSearchMatch(String(product.description), searchValue);
             }
           }
           return false;
@@ -1417,7 +1559,7 @@ function TableView() {
                   variant="outlined"
                       size="small"
                   sx={{ minWidth: 0, p: 1, borderRadius: 2, gap: 1 }}
-                  onClick={() => handleOpenImageDialog(row.index, false)}
+                  onClick={() => handleOpenImageDialog(row.original.id, false)}
                   startIcon={<VisibilityIcon fontSize="small" />}
                 >
                   View Images
@@ -1433,7 +1575,7 @@ function TableView() {
                 size="small"
                 color="info"
                 sx={{ minWidth: 0, p: 1, borderRadius: 2, gap: 1 }}
-                onClick={() => handleOpenImageDialog(row.index, true)}
+                onClick={() => handleOpenImageDialog(row.original.id, true)}
                 startIcon={<EditIcon fontSize="small" />}
               >
                 Edit Images
@@ -1947,11 +2089,23 @@ function TableView() {
         </DialogActions>
       </Dialog>
       <Dialog open={addDialogOpen} onClose={handleCloseAddDialog} PaperProps={{ sx: { borderRadius: "15px", boxShadow: 2 } }}>
-        <DialogTitle sx={{ fontWeight: 700, color: 'primary.main', fontSize: 22 }}>Add Product</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 700, color: 'primary.main', fontSize: 22, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          Add Product
+          <Button
+            startIcon={<TranslateIcon />}
+            onClick={handleManualTranslate}
+            disabled={translating || (!newProduct.name.en?.trim() && !newProduct.description.en?.trim())}
+            variant="outlined"
+            size="small"
+            sx={{ minWidth: 120 }}
+          >
+            {translating ? 'Translating...' : 'Translate'}
+          </Button>
+        </DialogTitle>
         <DialogContent>
           <Box sx={{ mb: 2, p: 1.5, bgcolor: 'info.light', borderRadius: 1, border: '1px solid', borderColor: 'info.main' }}>
             <Typography variant="body2" sx={{ color: 'info.contrastText', fontSize: 13 }}>
-              💡 <strong>Auto-translation:</strong> When you enter product name or description in English, it will automatically translate to Hindi and Telugu.
+              💡 <strong>Translation:</strong> Enter product name and description in English, then click the Translate button to automatically translate to Hindi and Telugu.
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
@@ -1976,16 +2130,16 @@ function TableView() {
             <Box sx={{ display: 'flex', gap: 1 }}>
               <TextField
                 label="Name (EN)"
-                value={newProduct.name.en}
-                onChange={e => handleAddProductFieldChange('name', e.target.value, null, 'en')}
+                value={newProduct.name.en || ''}
+                onChange={handleNameEnChange}
                 size="small"
                 fullWidth
                 disabled={!!newProductId}
               />
               <TextField
                 label="Name (HI)"
-                value={newProduct.name.hi}
-                onChange={e => handleAddProductFieldChange('name', e.target.value, null, 'hi')}
+                value={newProduct.name.hi || ''}
+                onChange={handleNameHiChange}
                 size="small"
                 fullWidth
                 disabled={!!newProductId}
@@ -2002,8 +2156,8 @@ function TableView() {
               />
               <TextField
                 label="Name (TE)"
-                value={newProduct.name.te}
-                onChange={e => handleAddProductFieldChange('name', e.target.value, null, 'te')}
+                value={newProduct.name.te || ''}
+                onChange={handleNameTeChange}
                 size="small"
                 fullWidth
                 disabled={!!newProductId}
@@ -2032,8 +2186,8 @@ function TableView() {
             <Box sx={{ display: 'flex', gap: 1 }}>
               <TextField
                 label="Description (EN)"
-                value={newProduct.description.en}
-                onChange={e => handleAddProductFieldChange('description', e.target.value, null, 'en')}
+                value={newProduct.description.en || ''}
+                onChange={handleDescriptionEnChange}
                 size="small"
                 fullWidth
                 multiline
@@ -2042,8 +2196,8 @@ function TableView() {
               />
               <TextField
                 label="Description (HI)"
-                value={newProduct.description.hi}
-                onChange={e => handleAddProductFieldChange('description', e.target.value, null, 'hi')}
+                value={newProduct.description.hi || ''}
+                onChange={handleDescriptionHiChange}
                 size="small"
                 fullWidth
                 multiline
@@ -2062,8 +2216,8 @@ function TableView() {
               />
               <TextField
                 label="Description (TE)"
-                value={newProduct.description.te}
-                onChange={e => handleAddProductFieldChange('description', e.target.value, null, 'te')}
+                value={newProduct.description.te || ''}
+                onChange={handleDescriptionTeChange}
                 size="small"
                 fullWidth
                 multiline
@@ -2334,11 +2488,23 @@ function TableView() {
       </Dialog>
       {/* Edit Product Dialog */}
       <Dialog open={editProductDialogOpen} onClose={handleCloseEditProductDialog} PaperProps={{ sx: { borderRadius: "15px", boxShadow: 2 } }}>
-        <DialogTitle sx={{ fontWeight: 700, color: 'primary.main', fontSize: 22 }}>Edit Product</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 700, color: 'primary.main', fontSize: 22, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          Edit Product
+          <Button
+            startIcon={<TranslateIcon />}
+            onClick={handleEditManualTranslate}
+            disabled={translating || (!editProductForm.name.en?.trim() && !editProductForm.description.en?.trim())}
+            variant="outlined"
+            size="small"
+            sx={{ minWidth: 120 }}
+          >
+            {translating ? 'Translating...' : 'Translate'}
+          </Button>
+        </DialogTitle>
         <DialogContent>
           <Box sx={{ mb: 2, p: 1.5, bgcolor: 'info.light', borderRadius: 1, border: '1px solid', borderColor: 'info.main' }}>
             <Typography variant="body2" sx={{ color: 'info.contrastText', fontSize: 13 }}>
-              💡 <strong>Auto-translation:</strong> When you change product name or description in English, it will automatically translate to Hindi and Telugu.
+              💡 <strong>Translation:</strong> Update product name and description in English, then click the Translate button to automatically translate to Hindi and Telugu.
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
@@ -2502,14 +2668,14 @@ function TableView() {
         </DialogTitle>
         <Divider />
         <DialogContent sx={{ pt: 2 }}>
-            {imageDialogRowIndex !== null && (
+            {imageDialogProductId != null && (
               <>
                 <Box sx={{ mb: 2, fontWeight: 500, color: 'text.secondary', fontSize: 16 }}>
                   Current Images
                 </Box>
                 <Grid container spacing={2}>
                   {imageDialogEditMode ? (
-                    (editedData[imageDialogRowIndex]?.imageUrls || []).map((imageId, idx) => (
+                    (imageDialogProduct?.imageUrls || []).map((imageId, idx) => (
                       imageId && (
                         <Grid span={6} sm={4} md={3} key={idx}>
                           <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, border: '1px solid #eee', borderRadius: 2, p: 1, bgcolor: '#fafbfc' }}>
